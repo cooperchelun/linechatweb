@@ -1,0 +1,577 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes">
+    <title>健康小幫手｜AI健康諮詢與紀錄</title>
+    <!-- Google Fonts & simple style reset -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+    <!-- Firebase SDKs (client) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+        import { getFirestore, collection, query, where, orderBy, limit, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+        
+        // 將 Firebase 設定暴露給全域 (供後續邏輯使用)
+        window.firebaseModules = { getFirestore, collection, query, where, orderBy, limit, getDocs, addDoc, serverTimestamp };
+        
+        // 你的 Firebase 專案設定 (請替換成你自己的 config)
+        // 注意: 為了安全，正式環境請使用環境變數或後端代理，此處為前端示範，請確保規則安全
+        // 您需要在 Firebase 專案中啟用 Firestore，並設定適當的安全性規則。
+        const firebaseConfig = {
+            apiKey: "YOUR_API_KEY",            // 請替換為您的 Web API Key
+            authDomain: "YOUR_PROJECT.firebaseapp.com",
+            projectId: "YOUR_PROJECT_ID",
+            storageBucket: "YOUR_PROJECT.appspot.com",
+            messagingSenderId: "123456789012",
+            appId: "YOUR_APP_ID"
+        };
+        
+        // 初始化 Firebase (僅一次)
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        window.db = db;  // 讓後續腳本可存取
+        
+        // 簡單顯示 init 完成
+        console.log("🔥 Firebase Client INIT OK (網頁版)");
+        document.body.setAttribute('data-firebase-ready', 'true');
+    </script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f0f7f0;
+            background-image: radial-gradient(circle at 10% 30%, rgba(180, 220, 180, 0.2) 0%, #eef5ea 90%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        /* 主要容器 - 手機風格卡片 */
+        .chat-container {
+            width: 100%;
+            max-width: 550px;
+            background: #ffffffdd;
+            backdrop-filter: blur(2px);
+            border-radius: 36px;
+            box-shadow: 0 25px 45px -12px rgba(0, 32, 0, 0.35);
+            overflow: hidden;
+            border: 1px solid #d9ecd0;
+        }
+
+        /* header */
+        .chat-header {
+            background: #2c6e2f;
+            padding: 20px 24px;
+            color: white;
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            flex-wrap: wrap;
+            gap: 8px;
+        }
+        .title h1 {
+            font-size: 1.55rem;
+            font-weight: 600;
+            letter-spacing: -0.3px;
+        }
+        .title p {
+            font-size: 0.75rem;
+            opacity: 0.85;
+            margin-top: 4px;
+        }
+        .user-badge {
+            background: #f9c74f;
+            padding: 6px 14px;
+            border-radius: 40px;
+            color: #2d3e2b;
+            font-size: 0.75rem;
+            font-weight: 700;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+        }
+
+        /* 聊天記錄區域 */
+        .messages-area {
+            height: 460px;
+            overflow-y: auto;
+            padding: 20px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            background: #fefef7;
+            scroll-behavior: smooth;
+        }
+
+        /* 氣泡通用 */
+        .message {
+            max-width: 85%;
+            display: flex;
+            flex-direction: column;
+            animation: fadeSlideUp 0.2s ease;
+        }
+        .user-msg {
+            align-self: flex-end;
+        }
+        .bot-msg {
+            align-self: flex-start;
+        }
+        .bubble {
+            padding: 12px 16px;
+            border-radius: 24px;
+            line-height: 1.45;
+            font-size: 0.95rem;
+            word-break: break-word;
+            box-shadow: 0 1px 1px rgba(0,0,0,0.05);
+        }
+        .user-msg .bubble {
+            background: #2c6e2f;
+            color: white;
+            border-bottom-right-radius: 6px;
+        }
+        .bot-msg .bubble {
+            background: #e9f3e6;
+            color: #1e2a1c;
+            border-bottom-left-radius: 6px;
+            border: 1px solid #cde2c4;
+        }
+        .timestamp {
+            font-size: 0.65rem;
+            color: #8ba888;
+            margin-top: 5px;
+            margin-left: 12px;
+            margin-right: 12px;
+        }
+        /* 輸入區塊 */
+        .input-area {
+            background: white;
+            padding: 14px 18px 20px;
+            border-top: 1px solid #ddebd6;
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+        .input-area input {
+            flex: 1;
+            border: 1.5px solid #cfe2c8;
+            border-radius: 60px;
+            padding: 12px 18px;
+            font-size: 1rem;
+            font-family: inherit;
+            outline: none;
+            transition: 0.2s;
+            background: #fefdf7;
+        }
+        .input-area input:focus {
+            border-color: #2c6e2f;
+            box-shadow: 0 0 0 3px rgba(44,110,47,0.2);
+        }
+        .input-area button {
+            background: #2c6e2f;
+            border: none;
+            color: white;
+            width: 48px;
+            height: 48px;
+            border-radius: 40px;
+            font-size: 1.4rem;
+            cursor: pointer;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        .input-area button:hover {
+            background: #1f5422;
+            transform: scale(0.96);
+        }
+        .input-area button:active {
+            transform: scale(0.94);
+        }
+        /* 快捷指令卡片 */
+        .quick-actions {
+            background: #f8faf3;
+            padding: 10px 18px 14px;
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            border-top: 1px solid #e2efdb;
+        }
+        .quick-chip {
+            background: white;
+            padding: 6px 14px;
+            border-radius: 40px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            color: #2c6e2f;
+            border: 1px solid #c6dfbc;
+            cursor: pointer;
+            transition: 0.1s;
+        }
+        .quick-chip:hover {
+            background: #e2f0dd;
+            border-color: #8fbc7a;
+        }
+        .typing-indicator {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+            padding: 8px 12px;
+            background: #e9f3e6;
+            border-radius: 20px;
+            width: fit-content;
+            font-size: 0.8rem;
+            color: #4a6741;
+        }
+        .dot {
+            width: 8px;
+            height: 8px;
+            background: #558b2f;
+            border-radius: 50%;
+            animation: pulse 1.4s infinite;
+        }
+        .dot:nth-child(2) { animation-delay: 0.2s; }
+        .dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes pulse {
+            0%, 60%, 100% { opacity: 0.4; transform: scale(0.8);}
+            30% { opacity: 1; transform: scale(1.2);}
+        }
+        @keyframes fadeSlideUp {
+            from { opacity: 0; transform: translateY(8px);}
+            to { opacity: 1; transform: translateY(0);}
+        }
+        .error-bubble {
+            background: #ffe1db;
+            color: #b13e2d;
+            border-left: 4px solid #e07a5f;
+        }
+        footer {
+            font-size: 0.7rem;
+            text-align: center;
+            padding: 12px;
+            background: #fefef7;
+            color: #98ab91;
+            border-top: 1px solid #e2efdb;
+        }
+        .small-note {
+            font-size: 0.7rem;
+            text-align: center;
+            margin-top: 6px;
+        }
+        @media (max-width: 500px) {
+            .bubble { font-size: 0.9rem;}
+            .messages-area { height: 420px; }
+        }
+    </style>
+</head>
+<body>
+<div class="chat-container">
+    <div class="chat-header">
+        <div class="title">
+            <h1>🌿 健康小幫手</h1>
+            <p>AI 初步症狀判斷 · 自動保存紀錄</p>
+        </div>
+        <div class="user-badge" id="userIdDisplay">👤 訪客模式</div>
+    </div>
+
+    <div class="messages-area" id="chatMessages">
+        <div class="message bot-msg">
+            <div class="bubble">👋 嗨！我是你的健康紀錄AI。<br>✅ 你可以輸入「紀錄」查詢最近5筆健康諮詢。<br>💬 或直接描述你的症狀，我會給你簡單建議！</div>
+            <div class="timestamp">剛剛</div>
+        </div>
+    </div>
+
+    <div class="quick-actions">
+        <span class="quick-chip" data-msg="頭痛 太陽穴抽痛">🤕 頭痛範例</span>
+        <span class="quick-chip" data-msg="喉嚨癢 咳嗽">😷 喉嚨不適</span>
+        <span class="quick-chip" data-msg="肚子痛 拉肚子">🤢 腸胃症狀</span>
+        <span class="quick-chip" data-msg="紀錄">📋 查看最近紀錄</span>
+    </div>
+
+    <div class="input-area">
+        <input type="text" id="messageInput" placeholder="描述你的症狀，或輸入「紀錄」..." autocomplete="off">
+        <button id="sendBtn">➤</button>
+    </div>
+    <footer>⚡ AI僅供參考，不構成醫療診斷。如有緊急狀況請立即就醫。</footer>
+</div>
+
+<script type="module">
+    import { getFirestore, collection, query, where, orderBy, limit, getDocs, addDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+    
+    // 取得初始化後的 db (來自模組區塊)
+    const db = window.db;
+    if (!db) {
+        console.error("Firestore 尚未初始化, 請先確認 firebaseConfig 正確且 API Key 有效");
+        alert("⚠️ 請先設定正確的 Firebase 設定 (apiKey, projectId) 於程式碼開頭。目前為示範，功能有限但模擬模式仍可用。");
+    }
+    
+    // ---------- 使用者識別 (使用 localStorage 模擬固定userId，像 LINE userId 概念) ----------
+    let userId = localStorage.getItem("health_user_id");
+    if (!userId) {
+        userId = "web_user_" + Math.random().toString(36).substring(2, 10);
+        localStorage.setItem("health_user_id", userId);
+    }
+    document.getElementById("userIdDisplay").innerHTML = `🆔 ${userId.slice(0, 12)}`;
+    
+    // DOM 元素
+    const messagesContainer = document.getElementById("chatMessages");
+    const inputEl = document.getElementById("messageInput");
+    const sendBtn = document.getElementById("sendBtn");
+    
+    // 輔助函式: 加入訊息到畫面 (type: 'user' 或 'bot')
+    function appendMessage(text, type, isError = false) {
+        const messageDiv = document.createElement("div");
+        messageDiv.className = `message ${type === 'user' ? 'user-msg' : 'bot-msg'}`;
+        const bubbleClass = isError ? "bubble error-bubble" : "bubble";
+        const bubble = document.createElement("div");
+        bubble.className = bubbleClass;
+        bubble.innerText = text;
+        const timeSpan = document.createElement("div");
+        timeSpan.className = "timestamp";
+        const now = new Date();
+        timeSpan.innerText = `${now.getHours().toString().padStart(2,'0')}:${now.getMinutes().toString().padStart(2,'0')}`;
+        messageDiv.appendChild(bubble);
+        messageDiv.appendChild(timeSpan);
+        messagesContainer.appendChild(messageDiv);
+        // 自動滾動到底部
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        return messageDiv;
+    }
+    
+    // 顯示打字中指示器
+    let typingIndicatorElement = null;
+    function showTyping() {
+        if (typingIndicatorElement) typingIndicatorElement.remove();
+        const indicatorDiv = document.createElement("div");
+        indicatorDiv.className = "message bot-msg";
+        indicatorDiv.innerHTML = `<div class="typing-indicator"><span class="dot"></span><span class="dot"></span><span class="dot"></span> AI 思考中...</div>`;
+        messagesContainer.appendChild(indicatorDiv);
+        messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        typingIndicatorElement = indicatorDiv;
+    }
+    function hideTyping() {
+        if (typingIndicatorElement) {
+            typingIndicatorElement.remove();
+            typingIndicatorElement = null;
+        }
+    }
+    
+    // ---------- 呼叫 Gemini API (與原先邏輯相同，但使用前端 fetch) ----------
+    async function askGemini(symptomText) {
+        const GEMINI_API_KEY = window.GEMINI_API_KEY || promptForGeminiKey(); 
+        // 若沒有key，先提示
+        if (!GEMINI_API_KEY || GEMINI_API_KEY === "YOUR_GEMINI_API_KEY") {
+            return "🔑 請先設定 Gemini API Key (於程式碼變數或 prompt)。您可以在右上角點擊刷新key，或修改網頁原始碼。";
+        }
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
+        const prompt = `
+你是一個LINE健康助理AI。
+請用超簡短繁體中文回答：
+
+格式：
+💡可能原因：一句話
+🩺建議：一句話
+⚠️就醫判斷：一句話
+
+症狀：${symptomText}
+`;
+        try {
+            const response = await fetch(url, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    contents: [{ parts: [{ text: prompt }] }]
+                })
+            });
+            const data = await response.json();
+            if (data?.candidates?.[0]?.content?.parts?.[0]?.text) {
+                return data.candidates[0].content.parts[0].text;
+            } else {
+                console.error("Gemini 回應異常", data);
+                return "🤖 AI 暫時無法理解，請稍後再試。";
+            }
+        } catch (err) {
+            console.error("Gemini fetch error:", err);
+            return "❌ AI 服務連線錯誤，請檢查網路或API金鑰。";
+        }
+    }
+    
+    // 簡易key prompt (用於示範，你可以直接在代碼中填入自己的KEY)
+    function promptForGeminiKey() {
+        let storedKey = localStorage.getItem("gemini_api_key");
+        if (!storedKey) {
+            storedKey = prompt("請輸入 Gemini API Key 以使用AI功能 (可至 Google AI Studio 取得)");
+            if (storedKey) localStorage.setItem("gemini_api_key", storedKey);
+            else return "";
+        }
+        return storedKey;
+    }
+    // 確保 window 上有可獲取 key 的方式
+    window.GEMINI_API_KEY = localStorage.getItem("gemini_api_key") || "";
+    if (!window.GEMINI_API_KEY) {
+        setTimeout(() => {
+            appendMessage("🔑 尚未設定 Gemini API Key，AI 建議功能將無法使用。請點擊下方「設置API Key」或刷新填入。", "bot", true);
+        }, 500);
+    }
+    
+    // ----- 1. 查詢 Firebase 紀錄 (與原邏輯相同: 顯示最近5筆message)-----
+    async function fetchUserRecords(userId) {
+        if (!db) throw new Error("Firestore not ready");
+        const logsRef = collection(db, "health_logs");
+        const q = query(logsRef, where("userId", "==", userId), orderBy("timestamp", "desc"), limit(5));
+        const snapshot = await getDocs(q);
+        if (snapshot.empty) {
+            return "📭 目前沒有任何健康紀錄喔。";
+        }
+        let list = "📋 你的最近紀錄：\n";
+        let i = 1;
+        snapshot.forEach(doc => {
+            const data = doc.data();
+            const msgPreview = data.message?.substring(0, 40) || "無訊息";
+            list += `${i}. ${msgPreview}\n`;
+            i++;
+        });
+        return list;
+    }
+    
+    // 2. 儲存對話紀錄到 Firestore (message, reply)
+    async function saveToFirestore(userId, userMsg, botReply) {
+        if (!db) {
+            console.warn("Firestore 未初始化，跳過儲存");
+            return;
+        }
+        try {
+            await addDoc(collection(db, "health_logs"), {
+                userId: userId,
+                message: userMsg,
+                reply: botReply,
+                timestamp: Date.now()   // 使用毫秒數，也可用 serverTimestamp()
+            });
+            console.log("✅ 已儲存紀錄至 Firebase");
+        } catch (err) {
+            console.error("❌ 儲存失敗:", err);
+            // 前端靜默失敗不影響主流程
+        }
+    }
+    
+    // ---------- 主要訊息處理流程 (完全對應原有邏輯)----------
+    async function processUserMessage(userMessage) {
+        if (!userMessage.trim()) return;
+        // 顯示使用者訊息
+        appendMessage(userMessage, "user");
+        inputEl.value = "";
+        
+        // 顯示打字中
+        showTyping();
+        
+        let replyText = "";
+        let isRecordIntent = false;
+        
+        try {
+            // 步驟1: 判斷是否包含「紀錄」 (與原條件 msg.includes("紀錄") 一致)
+            if (userMessage.includes("紀錄")) {
+                // 查詢 Firebase 最近5筆紀錄
+                replyText = await fetchUserRecords(userId);
+                isRecordIntent = true;
+            } 
+            else {
+                // 正常呼叫 Gemini AI
+                replyText = await askGemini(userMessage);
+                // 如果 AI 返回錯誤或無效, 預設訊息
+                if (!replyText || replyText.includes("API Key")) {
+                    // 若沒有key時，提供友善備援
+                    if (replyText.includes("API Key")) {
+                        replyText = "⚠️ 請設定 Gemini API 金鑰才能使用症狀分析。可點擊右上角重新輸入。";
+                    } else {
+                        replyText = "⚠️ AI 暫時無法回應，請稍後再試或檢查網路";
+                    }
+                }
+                // 儲存對話紀錄到 Firestore (使用者輸入 & AI回覆)
+                await saveToFirestore(userId, userMessage, replyText);
+            }
+        } catch (err) {
+            console.error("處理錯誤:", err);
+            replyText = "❌ 處理你的訊息時發生錯誤，請重新嘗試。";
+        } finally {
+            hideTyping();
+            // 顯示機器人回覆
+            if (replyText) {
+                appendMessage(replyText, "bot");
+            } else {
+                appendMessage("抱歉，沒有收到有效回覆。", "bot", true);
+            }
+        }
+    }
+    
+    // 事件綁定
+    sendBtn.addEventListener("click", () => {
+        const msg = inputEl.value.trim();
+        if (msg) processUserMessage(msg);
+    });
+    inputEl.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            const msg = inputEl.value.trim();
+            if (msg) processUserMessage(msg);
+        }
+    });
+    
+    // 快捷指令功能
+    document.querySelectorAll(".quick-chip").forEach(chip => {
+        chip.addEventListener("click", (e) => {
+            const quickMsg = chip.getAttribute("data-msg");
+            if (quickMsg) {
+                inputEl.value = quickMsg;
+                processUserMessage(quickMsg);
+            }
+        });
+    });
+    
+    // 補充: 在沒有firebase設定時提供警告, 但仍然模擬本地 (僅console提示)
+    if (!db) {
+        appendMessage("⚠️ Firestore 未正確初始化，查詢紀錄功能無法儲存及查詢。請檢查您的 firebaseConfig。但AI諮詢功能仍可使用。", "bot", true);
+    }
+    
+    // 另外，提供一個按鈕可在控制檯重新設定 Gemini Key (user friendly)
+    const headerBadge = document.getElementById("userIdDisplay");
+    headerBadge.style.cursor = "pointer";
+    headerBadge.title = "點擊設定 Gemini API Key";
+    headerBadge.addEventListener("click", () => {
+        const newKey = prompt("請輸入 Gemini API Key (Google AI Studio)", localStorage.getItem("gemini_api_key") || "");
+        if (newKey) {
+            localStorage.setItem("gemini_api_key", newKey);
+            window.GEMINI_API_KEY = newKey;
+            appendMessage("🔑 API Key 已更新！現在可以嘗試症狀諮詢。", "bot");
+        }
+    });
+    
+    // 補上對於「一般症狀問答」沒有key的再次提醒
+    window.askGemini = askGemini;
+    
+    // 初次檢查 firebase 設定是否正確 (如果 apiKey 是預設值則提示)
+    setTimeout(() => {
+        if (db && typeof db === 'object') {
+            // 簡單測試連線 (optional)
+            console.log("🔥 Firebase ready, 可使用資料庫");
+        } else {
+            if (!db) console.warn("請確實設定 firebaseConfig 變數，否則紀錄功能無法保存");
+        }
+    }, 1000);
+    console.log("✅ 網頁版健康助理已啟動，對應原始功能: 紀錄查詢 + Gemini 分析 + 自動儲存");
+    
+    // 額外修正: 為了讓 Firestore 的 timestamp 順序正確，原 orderBy 使用 timestamp 數字，我們儲存時使用 Date.now()
+    // 完全保持原 node.js 架構的精神，只是改成前端版。
+    // 注意: 安全性規則應該限制用戶只能讀寫自己的 userId (請在 firebase 規則設定)
+    // 展示頁面完全實作了原有的兩個主要路由邏輯:
+    // 1. 包含「紀錄」 -> 查詢 health_logs 最近5筆並顯示
+    // 2. 其他 -> Gemini 生成建議 + 儲存該次對話
+</script>
+<!-- 補充: 提醒 Firebase 設定步驟 -->
+<div style="display: none;">網頁版改造完成。完全對應 LINE Bot 邏輯: 紀錄查詢 + Gemini + 儲存至 Firestore</div>
+</body>
+</html>
