@@ -1,0 +1,12 @@
+{
+  "name": "linechat2006",
+  "version": "1.0.0",
+  "description": "LINE健康問題指引機器人",
+  "main": "index.js",
+  "scripts": {
+    "start": "node api/webhook.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^13.0.0"
+  }
+}
